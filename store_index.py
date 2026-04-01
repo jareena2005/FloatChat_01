@@ -1,44 +1,54 @@
-from dotenv import load_dotenv
+# store_index.py
+from langchain_community.vectorstores import Chroma
+from langchain_community.embeddings.huggingface import HuggingFaceEmbeddings
+from langchain.schema import Document  # if you are wrapping text+metadata
 import os
-from src.helpers import load_pdf_files, filter_to_minimal_docs, text_splitter, download_embeddings
-from pinecone import Pinecone, ServerlessSpec
-from langchain_pinecone import PineconeVectorStore
 
-# Load environment variables
-load_dotenv()
-PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+# ----------------------------
+# 1️⃣ Load your documents
+# ----------------------------
+# Example: list of Document objects or strings
+# Replace this with your actual document loading
+documents = [
+    Document(page_content="Document 1 text", metadata={"source": "file1.txt"}),
+    Document(page_content="Document 2 text", metadata={"source": "file2.txt"}),
+    # ... add all your documents here
+]
 
-os.environ["PINECONE_API_KEY"] = PINECONE_API_KEY
-os.environ["GROQ_API_KEY"] = GROQ_API_KEY
+print(f"Total documents: {len(documents)}")
 
-# Load documents
-extracted_data = load_pdf_files(data="data/")
-filter_data = filter_to_minimal_docs(extracted_data)
-text_chunks = text_splitter(filter_data)
-
-# Embeddings
-embedding = download_embeddings()
-
-# Pinecone init
-pc = Pinecone(api_key=PINECONE_API_KEY)
-index_name = "floatchat-research"
-
-# Create index if not exists
-if index_name not in pc.list_indexes().names():
-    pc.create_index(
-        name=index_name,
-        dimension=384,
-        metric="cosine",
-        spec=ServerlessSpec(cloud="aws", region="us-east-1")
-    )
-
-index = pc.Index(index_name)
-
-# Store vectors
-docsearch = PineconeVectorStore.from_documents(
-    documents=text_chunks,
-    embedding=embedding,
-    index_name=index_name,
+# ----------------------------
+# 2️⃣ Setup embeddings
+# ----------------------------
+# Using a lightweight, fast model
+embeddings = HuggingFaceEmbeddings(
+    model_name="sentence-transformers/all-MiniLM-L6-v2",
+    model_kwargs={"device": "cuda"} if os.environ.get("CUDA_VISIBLE_DEVICES") else {}
 )
-print("✅ Documents indexed in Pinecone successfully!")
+
+# ----------------------------
+# 3️⃣ Create or load Chroma collection
+# ----------------------------
+collection_name = "my_collection"
+vector_store = Chroma(collection_name=collection_name, embedding_function=embeddings)
+
+# ----------------------------
+# 4️⃣ Add documents in safe batches
+# ----------------------------
+MAX_BATCH = 1000  # safe batch size for Chroma (well below 5461 limit)
+for i in range(0, len(documents), MAX_BATCH):
+    batch = documents[i:i+MAX_BATCH]
+    vector_store.add_documents(batch)
+    print(f"Inserted batch {i} to {i+len(batch)-1}")
+
+print("✅ All documents indexed successfully!")
+
+#  ----------------------------
+# 5️⃣ Query the vector store
+# ----------------------------
+query = "Some text you want to search"
+results = vector_store.similarity_search(query, k=3)  # top 3 matches
+
+print("\n🔍 Search Results:")
+for r in results:
+    print(r.page_content, r.metadata)

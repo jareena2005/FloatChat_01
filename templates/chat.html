@@ -1,14 +1,25 @@
-<link href="//maxcdn.bootstrapcdn.com/bootstrap/4.1.1/css/bootstrap.min.css" rel="stylesheet" id="bootstrap-css">
-<script src="//maxcdn.bootstrapcdn.com/bootstrap/4.1.1/js/bootstrap.min.js"></script>
-<script src="//cdnjs.cloudflare.com/ajax/libs/jquery/3.2.1/jquery.min.js"></script>
+
 
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Chatbot</title>
-    <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.1.3/css/bootstrap.min.css" integrity="sha384-MCw98/SFnGE8fJT3GXwEOngsV7Zt27NXFoaoApmYm81iuXoPkFOJwJ8ERdknLPMO" crossorigin="anonymous">
-    <link rel="stylesheet" href="https://use.fontawesome.com/releases/v5.5.0/css/all.css" integrity="sha384-B4dIYHKNBt8Bc12p+WXckhzcICo0wtJAoU8YZTY5qE0Id1GSseTk6S+L3BlXeVIU" crossorigin="anonymous">
+    <title>FloatChat with Visualization</title>
+
+    <!-- Bootstrap & FontAwesome -->
+    <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.1.3/css/bootstrap.min.css">
+    <link rel="stylesheet" href="https://use.fontawesome.com/releases/v5.5.0/css/all.css">
+    
+    <!-- Chart.js for scatter plot -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <!-- Leaflet.js for map -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+
+    <!-- jQuery -->
     <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.3.1/jquery.min.js"></script>
+
+    <!-- Custom CSS -->
     <link rel="stylesheet" type="text/css" href="{{ url_for('static', filename='style.css')}}"/>
 </head>
 
@@ -17,10 +28,10 @@
         <div class="row justify-content-center h-100">        
             <div class="col-md-8 col-xl-6 chat">
                 <div class="card">
+                    <!-- Chat header -->
                     <div class="card-header msg_head">
                         <div class="d-flex bd-highlight">
                             <div class="img_cont">
-                                <!-- Bot image in header -->
                                 <img src="https://cdn-icons-png.flaticon.com/512/427/427735.png" class="rounded-circle user_img">
                                 <span class="online_icon"></span>
                             </div>
@@ -30,53 +41,128 @@
                             </div>
                         </div>
                     </div>
-                    <div id="messageFormeight" class="card-body msg_card_body">
-                        
-                    </div>
+
+                    <!-- Chat messages -->
+                    <div id="messageFormeight" class="card-body msg_card_body"></div>
+
+                    <!-- Chat input & visualization buttons -->
                     <div class="card-footer">
                         <form id="messageArea" class="input-group">
                             <input type="text" id="text" name="msg" placeholder="Type your message..." autocomplete="off" class="form-control type_msg" required/>
                             <div class="input-group-append">
-                                <button type="submit" id="send" class="input-group-text send_btn"><i class="fas fa-location-arrow"></i></button>
+                                <button type="submit" id="send" class="input-group-text send_btn">
+                                    <i class="fas fa-location-arrow"></i>
+                                </button>
+                                <button type="button" id="plot-temp-salinity" class="input-group-text send_btn" title="Temperature vs Salinity">
+                                    <i class="fas fa-chart-scatter"></i>
+                                </button>
+                                <button type="button" id="plot-float-map" class="input-group-text send_btn" title="Float Location Map">
+                                    <i class="fas fa-map-marker-alt"></i>
+                                </button>
                             </div>
                         </form>
                     </div>
                 </div>
+
+                <!-- Visualization container OUTSIDE the chat card -->
+                <div id="visualization" style="margin-top:15px; display:none;">
+                    <canvas id="scatterPlot" style="width:100%; height:300px;"></canvas>
+                    <div id="mapContainer" style="width:100%; height:300px; display:none;"></div>
+                </div>
+
             </div>
         </div>
     </div>
-    
+
     <script>
         $(document).ready(function() {
+            // Chat message submission
             $("#messageArea").on("submit", function(event) {
                 const date = new Date();
-                const hour = date.getHours();
-                const minute = date.getMinutes();
-                const str_time = hour + ":" + (minute < 10 ? "0" + minute : minute);
+                const str_time = date.getHours() + ":" + (date.getMinutes()<10?"0":"") + date.getMinutes();
                 var rawText = $("#text").val();
 
                 // User message bubble
-                var userHtml = '<div class="d-flex justify-content-end mb-4"><div class="msg_cotainer_send">' + rawText + '<span class="msg_time_send">'+ str_time + '</span></div><div class="img_cont_msg"><img src="https://i.ibb.co/d5b84Xw/Untitled-design.png" class="rounded-circle user_img_msg"></div></div>';
-                
+                var userHtml = '<div class="d-flex justify-content-end mb-4"><div class="msg_cotainer_send">' + rawText + '<span class="msg_time_send">'+ str_time +'</span></div><div class="img_cont_msg"><img src="https://i.ibb.co/d5b84Xw/Untitled-design.png" class="rounded-circle user_img_msg"></div></div>';
                 $("#text").val("");
                 $("#messageFormeight").append(userHtml);
 
-                // Send message to Flask backend
+                // Send to Flask backend
                 $.ajax({
-                    data: {
-                        msg: rawText,    
-                    },
+                    data: { msg: rawText },
                     type: "POST",
                     url: "/get",
                 }).done(function(data) {
-                    // Bot message bubble with DeepBlue image
-                    var botHtml = '<div class="d-flex justify-content-start mb-4"><div class="img_cont_msg"><img src="https://cdn-icons-png.flaticon.com/512/427/427735.png" class="rounded-circle user_img_msg"></div><div class="msg_cotainer">' + data + '<span class="msg_time">' + str_time + '</span></div></div>';
+                    var botHtml = '<div class="d-flex justify-content-start mb-4"><div class="img_cont_msg"><img src="https://cdn-icons-png.flaticon.com/512/427/427735.png" class="rounded-circle user_img_msg"></div><div class="msg_cotainer">' + data + '<span class="msg_time">'+ str_time +'</span></div></div>';
                     $("#messageFormeight").append($.parseHTML(botHtml));
+                    $("#messageFormeight").scrollTop($("#messageFormeight")[0].scrollHeight);
                 });
                 event.preventDefault();
             });
+
+            // Visualization buttons
+            let scatterChart;
+            $('#plot-temp-salinity').click(function() {
+                $('#visualization').show();
+                $('#scatterPlot').show();
+                $('#mapContainer').hide();
+
+                const data = {
+                    datasets: [{
+                        label: 'Temperature vs Salinity',
+                        data: [
+                            { x: 30, y: 35 },
+                            { x: 32, y: 36 },
+                            { x: 28, y: 34 },
+                            { x: 33, y: 37 }
+                        ],
+                        backgroundColor: 'rgba(82, 172, 255, 0.7)',
+                    }]
+                };
+
+                const config = {
+                    type: 'scatter',
+                    data: data,
+                    options: {
+                        scales: {
+                            x: { title: { display: true, text: 'Temperature (°C)' } },
+                            y: { title: { display: true, text: 'Salinity (PSU)' } }
+                        }
+                    }
+                };
+
+                if (scatterChart) scatterChart.destroy();
+                scatterChart = new Chart(document.getElementById('scatterPlot'), config);
+            });
+
+            let map;
+            $('#plot-float-map').click(function() {
+                $('#visualization').show();
+                $('#scatterPlot').hide();
+                $('#mapContainer').show();
+
+                if (!map) {
+                    map = L.map('mapContainer').setView([20.5937, 78.9629], 5);
+                    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                        attribution: '&copy; OpenStreetMap contributors'
+                    }).addTo(map);
+
+                    // Fetch float data dynamically from backend
+                    $.ajax({
+                        url: "/get-floats",
+                        type: "GET",
+                        dataType: "json"
+                    }).done(function(floats) {
+                        floats.forEach(f => {
+                            L.marker([f.lat, f.lon]).addTo(map)
+                            .bindPopup(f.name);
+                        });
+                    }).fail(function() {
+                        console.error("Failed to load float data");
+                    });
+                }
+            });
         });
     </script>
-    
 </body>
 </html>
