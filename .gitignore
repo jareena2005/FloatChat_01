@@ -213,3 +213,4 @@ environment/
 data/*.csv
 chroma/
 vectorstore/
+data/*.csv
