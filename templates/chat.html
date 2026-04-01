@@ -15,6 +15,8 @@
     <!-- Leaflet.js for map -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+    <!-- Leaflet Heatmap plugin -->
+    <script src="https://unpkg.com/leaflet.heat/dist/leaflet-heat.js"></script>
 
     <!-- jQuery -->
     <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.3.1/jquery.min.js"></script>
@@ -59,6 +61,9 @@
                                 <button type="button" id="plot-float-map" class="input-group-text send_btn" title="Float Location Map">
                                     <i class="fas fa-map-marker-alt"></i>
                                 </button>
+                                <button type="button" id="plot-heat-map" class="input-group-text send_btn" title="Heatmap of float density">
+                                    <i class="fas fa-fire"></i>
+                                </button>
                             </div>
                         </form>
                     </div>
@@ -76,31 +81,376 @@
 
     <script>
         $(document).ready(function() {
+            let map;
+            let mapInitialized = false;
+            let markerGroup = null;
+            let heatLayer = null;
+
             // Chat message submission
             $("#messageArea").on("submit", function(event) {
+                event.preventDefault();
+                
                 const date = new Date();
                 const str_time = date.getHours() + ":" + (date.getMinutes()<10?"0":"") + date.getMinutes();
                 var rawText = $("#text").val();
+                
+                if (!rawText.trim()) {
+                    console.log("Empty message, skipping");
+                    return;
+                }
+
+                console.log("Sending message:", rawText);
 
                 // User message bubble
                 var userHtml = '<div class="d-flex justify-content-end mb-4"><div class="msg_cotainer_send">' + rawText + '<span class="msg_time_send">'+ str_time +'</span></div><div class="img_cont_msg"><img src="https://i.ibb.co/d5b84Xw/Untitled-design.png" class="rounded-circle user_img_msg"></div></div>';
                 $("#text").val("");
                 $("#messageFormeight").append(userHtml);
+                $("#messageFormeight").scrollTop($("#messageFormeight")[0].scrollHeight);
 
                 // Send to Flask backend
                 $.ajax({
-                    data: { msg: rawText },
+                    data: JSON.stringify({ msg: rawText }),
                     type: "POST",
                     url: "/get",
-                }).done(function(data) {
-                    var botHtml = '<div class="d-flex justify-content-start mb-4"><div class="img_cont_msg"><img src="https://cdn-icons-png.flaticon.com/512/427/427735.png" class="rounded-circle user_img_msg"></div><div class="msg_cotainer">' + data + '<span class="msg_time">'+ str_time +'</span></div></div>';
+                    contentType: "application/json",
+                    dataType: "json"
+                }).done(function(response) {
+                    console.log("Response from server:", response);
+                    
+                    // Parse response
+                    var data = response;
+                    var answerText = data.answer || "No response";
+                    var isMapRelated = data.is_map_related || data.show_map_button || false;
+                    var oceanData = data.ocean_data || null;
+                    var detectedOcean = data.detected_ocean || null;
+
+                    console.log("Answer:", answerText);
+                    console.log("Is Map Related:", isMapRelated);
+                    console.log("Ocean Data:", oceanData);
+                    console.log("Detected Ocean:", detectedOcean);
+
+                    // Build bot response HTML
+                    var botHtml = '<div class="d-flex justify-content-start mb-4"><div class="img_cont_msg"><img src="https://cdn-icons-png.flaticon.com/512/427/427735.png" class="rounded-circle user_img_msg"></div><div class="msg_cotainer">' + answerText;
+                    
+                    // Add map button if response is map-related or ocean is detected
+                    if (isMapRelated || oceanData) {
+                        var mapBtnText = oceanData ? ('View ' + oceanData.name) : 'View on Map';
+                        botHtml += '<div class="mt-2"><button class="btn btn-sm btn-primary view-map-btn" style="margin-top: 8px;"><i class="fas fa-map"></i> ' + mapBtnText + '</button></div>';
+                    }
+                    
+                    botHtml += '<span class="msg_time">'+ str_time +'</span></div></div>';
                     $("#messageFormeight").append($.parseHTML(botHtml));
+                    
+                    // Store ocean data for map button handler
+                    $(".view-map-btn").last().data('oceanData', oceanData).data('detectedOcean', detectedOcean);
+                    
+                    // Attach click handler to dynamically created map button
+                    $(".view-map-btn").last().click(function() {
+                        const oceanData = $(this).data('oceanData');
+                        const detectedOcean = $(this).data('detectedOcean');
+                        openFloatMap(oceanData, detectedOcean);
+                    });
+
+                    // Auto-open map if ocean is detected
+                    if (oceanData) {
+                        openFloatMap(oceanData, detectedOcean);
+                    }
+
+                    // Logging for debugging
+                    console.log('visualization_data', data.visualization_data);
+                    console.log('csv_viz', data.csv_viz);
+
+                    // Query-driven scatter or heatmap; if found, use it and skip CSV fallback
+                    if (data.visualization_data) {
+                        if (data.visualization_data.plot_type === 'scatter') {
+                            renderScatterPlot(data.visualization_data);
+                        } else if (data.visualization_data.visualization_type === 'salinity_heatmap') {
+                            openHeatMap(null, null, data.visualization_data.points);
+                        }
+
+                        $("#messageFormeight").scrollTop($("#messageFormeight")[0].scrollHeight);
+                        return;
+                    }
+
+                    // Render CSV-based visualization if no higher-priority visualization exists
+                    if (data.csv_viz) {
+                        renderCSVVisualization(data.csv_viz);
+                    }
+
+                    $("#messageFormeight").scrollTop($("#messageFormeight")[0].scrollHeight);
+                }).fail(function(jqXHR, textStatus, errorThrown) {
+                    console.error("AJAX Error:", textStatus, errorThrown);
+                    console.error("Response Text:", jqXHR.responseText);
+                    
+                    var errorHtml = '<div class="d-flex justify-content-start mb-4"><div class="img_cont_msg"><img src="https://cdn-icons-png.flaticon.com/512/427/427735.png" class="rounded-circle user_img_msg"></div><div class="msg_cotainer">Sorry, something went wrong. Error: ' + textStatus + '<span class="msg_time">'+ str_time +'</span></div></div>';
+                    $("#messageFormeight").append($.parseHTML(errorHtml));
                     $("#messageFormeight").scrollTop($("#messageFormeight")[0].scrollHeight);
                 });
-                event.preventDefault();
             });
 
-            // Visualization buttons
+            // function to initialize the base map and click-to-fact behavior
+            function initMap(oceanData) {
+                if (!mapInitialized) {
+                    var centerLat = 20.5937;
+                    var centerLon = 78.9629;
+                    var zoomLevel = 3;
+
+                    if (oceanData && oceanData.center) {
+                        centerLat = oceanData.center.lat;
+                        centerLon = oceanData.center.lon;
+                        zoomLevel = oceanData.zoom || 3;
+                    }
+
+                    map = L.map('mapContainer').setView([centerLat, centerLon], zoomLevel);
+                    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                        attribution: '&copy; OpenStreetMap contributors',
+                        maxZoom: 19
+                    }).addTo(map);
+
+                    markerGroup = L.layerGroup().addTo(map);
+                    heatLayer = null;
+
+                    map.on('click', function(e) {
+                        const clickedOcean = getOceanByLatLon(e.latlng.lat, e.latlng.lng);
+                        if (clickedOcean) {
+                            const oceanFact = getOceanFact(clickedOcean);
+                            map.openPopup(L.popup({closeButton: true})
+                                .setLatLng(e.latlng)
+                                .setContent('<b>' + capitalize(clickedOcean) + ' Ocean</b><br>' + oceanFact));
+                            appendChatFact('You clicked in the ' + capitalize(clickedOcean) + ' Ocean. Fact: ' + oceanFact);
+                        } else {
+                            map.openPopup(L.popup({closeButton: true})
+                                .setLatLng(e.latlng)
+                                .setContent('Location is not in the defined major oceans.'));
+                        }
+                    });
+
+                    mapInitialized = true;
+                } else {
+                    if (oceanData && oceanData.center) {
+                        map.setView([oceanData.center.lat, oceanData.center.lon], oceanData.zoom || 3);
+                    }
+                    map.invalidateSize();
+                }
+            }
+
+            function loadFloatMarkers(floats) {
+                if (!markerGroup) markerGroup = L.layerGroup().addTo(map);
+                markerGroup.clearLayers();
+                floats.forEach(f => {
+                    if (f.lat && f.lon) {
+                        L.marker([f.lat, f.lon])
+                            .bindPopup('<strong>' + f.name + '</strong><br>Lat: ' + f.lat + '<br>Lon: ' + f.lon)
+                            .addTo(markerGroup);
+                    }
+                });
+            }
+
+            function openFloatMap(oceanData, detectedOcean) {
+                $('#visualization').show();
+                $('#scatterPlot').hide();
+                $('#mapContainer').show();
+
+                initMap(oceanData);
+
+                var floatUrl = '/get-floats';
+                if (detectedOcean) floatUrl += '?ocean=' + encodeURIComponent(detectedOcean);
+
+                $.ajax({
+                    url: floatUrl,
+                    type: 'GET',
+                    dataType: 'json',
+                    success: function(floats) {
+                        console.log('Floats loaded for map:', floats);
+                        loadFloatMarkers(floats);
+                        map.invalidateSize();
+                    },
+                    error: function(jqXHR, textStatus, errorThrown) {
+                        console.error('Failed to load float data:', textStatus, errorThrown);
+                        alert('Failed to load float data from server.');
+                    }
+                });
+            }
+
+            function openHeatMap(oceanData, detectedOcean, dataPoints) {
+                console.log('openHeatMap called', oceanData, detectedOcean, dataPoints);
+                if (typeof L === 'undefined') {
+                    alert('Leaflet L not loaded');
+                    return;
+                }
+                if (typeof L.heatLayer === 'undefined') {
+                    alert('L.heatLayer not loaded');
+                    return;
+                }
+                initMap(oceanData);
+                // For heatmap, ensure global view to show all points
+                if (!oceanData) {
+                    map.setView([0, 0], 2);
+                }
+
+                var drawHeat = function(points) {
+                    if (heatLayer) {
+                        map.removeLayer(heatLayer);
+                    }
+                    heatLayer = L.heatLayer(points, {radius: 25, blur: 18, maxZoom: 17}).addTo(map);
+                };
+
+                if (dataPoints && Array.isArray(dataPoints) && dataPoints.length > 0) {
+                    drawHeat(dataPoints);
+                    map.invalidateSize();
+                    return;
+                }
+
+                var floatUrl = '/get-floats';
+                if (detectedOcean) floatUrl += '?ocean=' + encodeURIComponent(detectedOcean);
+
+                $.ajax({
+                    url: floatUrl,
+                    type: 'GET',
+                    dataType: 'json',
+                    success: function(floats) {
+                        map.invalidateSize();
+                        if (floats && floats.length > 0) {
+                            var heatPoints = floats
+                                .filter(f => f.lat && f.lon)
+                                .map(f => [f.lat, f.lon, 0.7]);
+                            drawHeat(heatPoints);
+                        }
+                        loadFloatMarkers(floats);
+                    },
+                    error: function(jqXHR, textStatus, errorThrown) {
+                        console.error('Failed to load float data for heatmap:', textStatus, errorThrown);
+                        alert('Failed to load float data for heatmap.');
+                    }
+                });
+            }
+
+            function getOceanByLatLon(lat, lon) {
+                // Normalize lon to [-180, 180]
+                var normalizedLon = ((lon + 180) % 360 + 360) % 360 - 180;
+
+                // Pacific Ocean approx boundaries (broad, includes North and South Pacific)
+                if ((normalizedLon >= 120 && normalizedLon <= 180) || (normalizedLon >= -180 && normalizedLon <= -70)) {
+                    if (lat >= -70 && lat <= 70) {
+                        return 'pacific';
+                    }
+                }
+
+                // Atlantic Ocean approximate
+                if (normalizedLon > -70 && normalizedLon < 20 && lat >= -70 && lat <= 70) {
+                    return 'atlantic';
+                }
+
+                // Indian Ocean approximate
+                if (normalizedLon >= 20 && normalizedLon <= 120 && lat >= -60 && lat <= 30) {
+                    return 'indian';
+                }
+
+                // Arctic/Southern fallback
+                if (lat > 70) return 'arctic';
+                if (lat < -60) return 'southern';
+
+                return null;
+            }
+
+            function getOceanFact(oceanKey) {
+                var facts = {
+                    pacific: 'The Pacific Ocean is the largest and deepest ocean, covering over 30% of the Earth’s surface.',
+                    atlantic: 'The Atlantic Ocean is the second-largest ocean, known for the Gulf Stream that warms Europe.',
+                    indian: 'The Indian Ocean is the warmest ocean and is bounded by Africa, Asia, Australia, and the Southern Ocean.',
+                    arctic: 'The Arctic Ocean is the smallest and shallowest ocean, with sea ice covering much of its surface.',
+                    southern: 'The Southern Ocean encircles Antarctica and plays a key role in global ocean circulation.'
+                };
+                return facts[oceanKey] || 'No specific fact available for this region yet.';
+            }
+
+            function capitalize(str) {
+                return str ? str.charAt(0).toUpperCase() + str.slice(1) : str;
+            }
+
+            function appendChatFact(text) {
+                var date = new Date();
+                var str_time = date.getHours() + ':' + (date.getMinutes() < 10 ? '0' : '') + date.getMinutes();
+                var factHtml = '<div class="d-flex justify-content-start mb-4"><div class="img_cont_msg"><img src="https://cdn-icons-png.flaticon.com/512/427/427735.png" class="rounded-circle user_img_msg"></div><div class="msg_cotainer">' + text + '<span class="msg_time">' + str_time + '</span></div></div>';
+                $('#messageFormeight').append(factHtml);
+                $('#messageFormeight').scrollTop($('#messageFormeight')[0].scrollHeight);
+            }
+
+            function renderScatterPlot(viz) {
+                console.log('renderScatterPlot called', viz);
+                if (!viz || !viz.points) return;
+
+                $('#visualization').show();
+                $('#scatterPlot').show();
+                $('#mapContainer').hide();
+
+                var scatterData = {
+                    datasets: [{
+                        label: viz.title || 'Scatter Plot',
+                        data: viz.points,
+                        backgroundColor: 'rgba(255, 99, 132, 0.7)',
+                        borderColor: 'rgba(255, 99, 132, 1)',
+                        pointRadius: 6
+                    }]
+                };
+
+                var scatterOptions = {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: { title: { display: true, text: viz.x_label || 'X' }, beginAtZero: true },
+                        y: { title: { display: true, text: viz.y_label || 'Y' }, beginAtZero: true }
+                    }
+                };
+
+                if (scatterChart) scatterChart.destroy();
+                scatterChart = new Chart(document.getElementById('scatterPlot'), {
+                    type: 'scatter',
+                    data: scatterData,
+                    options: scatterOptions
+                });
+            }
+
+            function renderCSVVisualization(csvViz) {
+                if (!csvViz || !csvViz.labels || !csvViz.values) return;
+
+                $('#visualization').show();
+                $('#scatterPlot').show();
+                $('#mapContainer').hide();
+
+                // Convert histogram to bar for Chart.js compatibility
+                var chartType = csvViz.plot_type;
+                if (chartType === 'histogram') chartType = 'bar';
+
+                const data = {
+                    labels: csvViz.labels,
+                    datasets: [{
+                        label: csvViz.title || 'CSV Data',
+                        data: csvViz.values,
+                        backgroundColor: 'rgba(54, 162, 235, 0.7)',
+                        borderColor: 'rgba(54, 162, 235, 1)',
+                        borderWidth: 1,
+                        fill: false
+                    }]
+                };
+
+                const options = {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: { title: { display: true, text: csvViz.x_label || 'Category' } },
+                        y: { title: { display: true, text: csvViz.y_label || 'Value' }, beginAtZero: true }
+                    }
+                };
+
+                if (scatterChart) scatterChart.destroy();
+                scatterChart = new Chart(document.getElementById('scatterPlot'), {
+                    type: chartType,
+                    data: data,
+                    options: options
+                });
+            }
+
             let scatterChart;
             $('#plot-temp-salinity').click(function() {
                 $('#visualization').show();
@@ -124,9 +474,17 @@
                     type: 'scatter',
                     data: data,
                     options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
                         scales: {
-                            x: { title: { display: true, text: 'Temperature (°C)' } },
-                            y: { title: { display: true, text: 'Salinity (PSU)' } }
+                            x: { 
+                                title: { display: true, text: 'Temperature (°C)' },
+                                beginAtZero: true 
+                            },
+                            y: { 
+                                title: { display: true, text: 'Salinity (PSU)' },
+                                beginAtZero: true 
+                            }
                         }
                     }
                 };
@@ -135,33 +493,15 @@
                 scatterChart = new Chart(document.getElementById('scatterPlot'), config);
             });
 
-            let map;
             $('#plot-float-map').click(function() {
-                $('#visualization').show();
-                $('#scatterPlot').hide();
-                $('#mapContainer').show();
-
-                if (!map) {
-                    map = L.map('mapContainer').setView([20.5937, 78.9629], 5);
-                    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                        attribution: '&copy; OpenStreetMap contributors'
-                    }).addTo(map);
-
-                    // Fetch float data dynamically from backend
-                    $.ajax({
-                        url: "/get-floats",
-                        type: "GET",
-                        dataType: "json"
-                    }).done(function(floats) {
-                        floats.forEach(f => {
-                            L.marker([f.lat, f.lon]).addTo(map)
-                            .bindPopup(f.name);
-                        });
-                    }).fail(function() {
-                        console.error("Failed to load float data");
-                    });
-                }
+                openFloatMap();
             });
+
+            $('#plot-heat-map').click(function() {
+                openHeatMap();
+            });
+            
+            console.log("Chat interface loaded successfully");
         });
     </script>
 </body>
