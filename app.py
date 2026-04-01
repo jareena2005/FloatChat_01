@@ -10,6 +10,9 @@ from langchain.chains import create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
 from langchain_core.prompts import ChatPromptTemplate
 from src.prompt import system_prompt
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+from coral_alert import check_coral_health, get_coral_distribution, get_coral_by_image, load_coral_data
 
 app = Flask(__name__)
 
@@ -411,7 +414,67 @@ def chat():
         }), 500
 
 # ----------------------------
-# 8️⃣ Run Flask app
+# 8️⃣ Coral Alert Routes
+# ----------------------------
+@app.route("/get-coral-health", methods=["GET"])
+def get_coral_health():
+    """Return coral health status"""
+    try:
+        coral_data = load_coral_data()
+        health_info = check_coral_health(coral_data)
+        return jsonify(health_info)
+    except Exception as e:
+        print("Error in /get-coral-health endpoint:", str(e))
+        return jsonify({
+            "status": "⚠ Error loading coral data",
+            "health_level": "unknown",
+            "damage_percent": 0,
+            "total_samples": 0,
+            "damaged_samples": 0,
+            "error": str(e)
+        }), 500
+
+@app.route("/get-coral-visualization", methods=["GET"])
+def get_coral_visualization():
+    """Return coral data for visualization"""
+    try:
+        coral_data = load_coral_data()
+        
+        # Get distribution of labels
+        label_dist = get_coral_distribution(coral_data)
+        
+        # Get damage by image
+        image_damage = get_coral_by_image(coral_data)
+        
+        # Prepare chart data
+        labels = list(label_dist.keys())
+        values = list(label_dist.values())
+        
+        # Separate healthy and damaged labels for pie chart
+        damage_labels = ["broken_coral", "broken_coral_rubble", "dead_coral"]
+        healthy_count = sum([v for k, v in label_dist.items() if k not in damage_labels])
+        damaged_count = sum([v for k, v in label_dist.items() if k in damage_labels])
+        
+        return jsonify({
+            "label_distribution": label_dist,
+            "image_damage": image_damage,
+            "pie_data": {
+                "labels": ["Healthy Coral", "Damaged Coral"],
+                "values": [healthy_count, damaged_count]
+            },
+            "bar_data": {
+                "labels": labels,
+                "values": values
+            }
+        })
+    except Exception as e:
+        print("Error in /get-coral-visualization endpoint:", str(e))
+        return jsonify({
+            "error": str(e)
+        }), 500
+
+# ----------------------------
+# 9️⃣ Run Flask app
 # ----------------------------
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080, debug=True)

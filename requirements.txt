@@ -19,3 +19,6 @@ transformers>=4.40.0
 # PDF + other utils
 pypdf>=5.6.1
 requests>=2.33.1
+
+# Data processing
+pandas>=2.0.0

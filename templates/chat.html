@@ -64,6 +64,9 @@
                                 <button type="button" id="plot-heat-map" class="input-group-text send_btn" title="Heatmap of float density">
                                     <i class="fas fa-fire"></i>
                                 </button>
+                                <button type="button" id="plot-coral-alert" class="input-group-text send_btn" title="Coral Reef Health Status">
+                                    <i class="fas fa-heart"></i>
+                                </button>
                             </div>
                         </form>
                     </div>
@@ -73,6 +76,27 @@
                 <div id="visualization" style="margin-top:15px; display:none;">
                     <canvas id="scatterPlot" style="width:100%; height:300px;"></canvas>
                     <div id="mapContainer" style="width:100%; height:300px; display:none;"></div>
+                </div>
+
+                <!-- Coral Alert Container -->
+                <div id="coralAlertContainer" style="margin-top:15px; display:none; max-height: 600px; overflow-y: auto;">
+                    <div class="card">
+                        <div class="card-header coral-header">
+                            <h5 style="margin: 0;">🪸 Coral Reef Health Monitor</h5>
+                        </div>
+                        <div class="card-body">
+                            <div id="coralHealthStatus" style="text-align: center; font-size: 1.2em; margin-bottom: 15px;"></div>
+                            <div id="coralCharts" style="display: flex; gap: 15px; flex-wrap: wrap; justify-content: center; width: 100%;">
+                                <div style="width: 320px; height: 320px;">
+                                    <canvas id="coralPieChart" style="width: 100%; height: 100%;"></canvas>
+                                </div>
+                                <div style="width: 420px; height: 320px;">
+                                    <canvas id="coralBarChart" style="width: 100%; height: 100%;"></canvas>
+                                </div>
+                            </div>
+                            <div id="coralStats" style="margin-top: 15px; padding: 10px; background-color: #f8f9fa; border-radius: 5px; font-size: 0.95em;"></div>
+                        </div>
+                    </div>
                 </div>
 
             </div>
@@ -500,6 +524,129 @@
             $('#plot-heat-map').click(function() {
                 openHeatMap();
             });
+
+            let coralPieChart;
+            let coralBarChart;
+
+            $('#plot-coral-alert').click(function() {
+                openCoralAlert();
+            });
+
+            function openCoralAlert() {
+                $('#visualization').hide();
+                $('#coralAlertContainer').show();
+
+                $.ajax({
+                    url: '/get-coral-health',
+                    type: 'GET',
+                    dataType: 'json',
+                    success: function(healthData) {
+                        console.log('Coral health data:', healthData);
+                        
+                        // Display health status
+                        let statusColor = '#4cd137'; // green
+                        if (healthData.health_level === 'warning') {
+                            statusColor = '#ffa502'; // orange
+                        } else if (healthData.health_level === 'critical') {
+                            statusColor = '#ff3838'; // red
+                        }
+                        
+                        $('#coralHealthStatus').html(
+                            '<div style="color: ' + statusColor + ';">' + healthData.status + '</div>' +
+                            '<div style="font-size: 0.9em; color: #fff; margin-top: 8px;">Damage: ' + healthData.damage_percent.toFixed(2) + '%</div>'
+                        );
+
+                        // Load visualization data
+                        $.ajax({
+                            url: '/get-coral-visualization',
+                            type: 'GET',
+                            dataType: 'json',
+                            success: function(vizData) {
+                                console.log('Coral visualization data:', vizData);
+
+                                // Small delay to ensure DOM is ready with new container
+                                setTimeout(function() {
+                                    // Render pie chart
+                                    if (coralPieChart) coralPieChart.destroy();
+                                    coralPieChart = new Chart(document.getElementById('coralPieChart'), {
+                                        type: 'doughnut',
+                                        data: {
+                                            labels: vizData.pie_data.labels,
+                                            datasets: [{
+                                                data: vizData.pie_data.values,
+                                                backgroundColor: ['#4cd137', '#ff3838'],
+                                                borderColor: ['#fff', '#fff'],
+                                                borderWidth: 2
+                                            }]
+                                        },
+                                        options: {
+                                            responsive: true,
+                                            maintainAspectRatio: true,
+                                            plugins: {
+                                                legend: { position: 'bottom', labels: { color: '#fff' } },
+                                                title: { display: true, text: 'Coral Health Distribution', color: '#fff' }
+                                            }
+                                        }
+                                    });
+
+                                    // Render bar chart
+                                    const barLabels = vizData.bar_data.labels.slice(0, 8); // Limit to 8 for readability
+                                    const barValues = vizData.bar_data.values.slice(0, 8);
+                                    
+                                    if (coralBarChart) coralBarChart.destroy();
+                                    coralBarChart = new Chart(document.getElementById('coralBarChart'), {
+                                        type: 'bar',
+                                        data: {
+                                            labels: barLabels,
+                                            datasets: [{
+                                                label: 'Count',
+                                                data: barValues,
+                                                backgroundColor: 'rgba(255, 107, 157, 0.7)',
+                                                borderColor: 'rgba(255, 107, 157, 1)',
+                                                borderWidth: 1
+                                            }]
+                                        },
+                                        options: {
+                                            responsive: true,
+                                            maintainAspectRatio: true,
+                                            indexAxis: 'y',
+                                            plugins: {
+                                                legend: { labels: { color: '#fff' } },
+                                                title: { display: true, text: 'Label Distribution', color: '#fff' }
+                                            },
+                                            scales: {
+                                                x: { ticks: { color: '#fff' }, title: { display: true, text: 'Count', color: '#fff' } },
+                                                y: { ticks: { color: '#fff', font: { size: 10 } }, title: { display: true, text: 'Label', color: '#fff' } }
+                                            }
+                                        }
+                                    });
+
+                                    // Display statistics
+                                    const totalAnnotations = healthData.total_samples;
+                                    const damagedCount = healthData.damaged_samples;
+                                    const healthyCount = totalAnnotations - damagedCount;
+
+                                    $('#coralStats').html(
+                                        '<strong>📊 Coral Annotation Statistics</strong><br><br>' +
+                                        '<strong>Total Annotations:</strong> ' + totalAnnotations + '<br>' +
+                                        '<strong>Damaged Coral:</strong> ' + damagedCount + ' (' + healthData.damage_percent.toFixed(2) + '%)<br>' +
+                                        '<strong>Healthy Coral:</strong> ' + healthyCount + ' (' + (100 - healthData.damage_percent).toFixed(2) + '%)<br><br>' +
+                                        '<em>Analysis based on: ' + Object.keys(vizData.label_distribution).length + ' different coral types detected</em>'
+                                    );
+                                }, 100);
+                            },
+                            error: function(jqXHR, textStatus, errorThrown) {
+                                console.error('Failed to load coral visualization data:', textStatus, errorThrown);
+                                $('#coralStats').html('<span style="color: #ff3838;">Error loading visualization data</span>');
+                            }
+                        });
+                    },
+                    error: function(jqXHR, textStatus, errorThrown) {
+                        console.error('Failed to load coral health data:', textStatus, errorThrown);
+                        $('#coralHealthStatus').html('<div style="color: #ff3838;">Error loading coral health data</div>');
+                    }
+                });
+            }
             
             console.log("Chat interface loaded successfully");
         });
