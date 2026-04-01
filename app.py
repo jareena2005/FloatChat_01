@@ -420,8 +420,9 @@ def chat():
 def get_coral_health():
     """Return coral health status"""
     try:
-        coral_data = load_coral_data()
-        health_info = check_coral_health(coral_data)
+        region = request.args.get('region', None)
+        health_info = check_coral_health(region=region)
+        health_info['region'] = region if region else 'all'
         return jsonify(health_info)
     except Exception as e:
         print("Error in /get-coral-health endpoint:", str(e))
@@ -431,6 +432,7 @@ def get_coral_health():
             "damage_percent": 0,
             "total_samples": 0,
             "damaged_samples": 0,
+            "region": region if region else 'all',
             "error": str(e)
         }), 500
 
@@ -438,13 +440,14 @@ def get_coral_health():
 def get_coral_visualization():
     """Return coral data for visualization"""
     try:
-        coral_data = load_coral_data()
+        region = request.args.get('region', None)
+        coral_data = load_coral_data(region=region)
         
         # Get distribution of labels
-        label_dist = get_coral_distribution(coral_data)
+        label_dist = get_coral_distribution(region=region, coral_data=coral_data)
         
         # Get damage by image
-        image_damage = get_coral_by_image(coral_data)
+        image_damage = get_coral_by_image(region=region, coral_data=coral_data)
         
         # Prepare chart data
         labels = list(label_dist.keys())
@@ -456,6 +459,7 @@ def get_coral_visualization():
         damaged_count = sum([v for k, v in label_dist.items() if k in damage_labels])
         
         return jsonify({
+            "region": region if region else 'all',
             "label_distribution": label_dist,
             "image_damage": image_damage,
             "pie_data": {
@@ -470,6 +474,7 @@ def get_coral_visualization():
     except Exception as e:
         print("Error in /get-coral-visualization endpoint:", str(e))
         return jsonify({
+            "region": region if region else 'all',
             "error": str(e)
         }), 500
 

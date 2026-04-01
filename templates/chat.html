@@ -49,8 +49,9 @@
 
                     <!-- Chat input & visualization buttons -->
                     <div class="card-footer">
-                        <form id="messageArea" class="input-group">
+                        <form id="messageArea" class="input-group" style="flex-wrap: wrap; gap: 8px;">
                             <input type="text" id="text" name="msg" placeholder="Type your message..." autocomplete="off" class="form-control type_msg" required/>
+                            <input type="text" id="coral-region-input" placeholder="Region filter (optional) e.g. i0201" class="form-control" style="max-width: 220px;" />
                             <div class="input-group-append">
                                 <button type="submit" id="send" class="input-group-text send_btn">
                                     <i class="fas fa-location-arrow"></i>
@@ -529,15 +530,21 @@
             let coralBarChart;
 
             $('#plot-coral-alert').click(function() {
-                openCoralAlert();
+                var regionValue = $('#coral-region-input').val().trim();
+                openCoralAlert(regionValue);
             });
 
-            function openCoralAlert() {
+            function openCoralAlert(region) {
                 $('#visualization').hide();
                 $('#coralAlertContainer').show();
 
+                var healthUrl = '/get-coral-health';
+                if (region) {
+                    healthUrl += '?region=' + encodeURIComponent(region);
+                }
+
                 $.ajax({
-                    url: '/get-coral-health',
+                    url: healthUrl,
                     type: 'GET',
                     dataType: 'json',
                     success: function(healthData) {
@@ -551,14 +558,21 @@
                             statusColor = '#ff3838'; // red
                         }
                         
+                        var regionText = healthData.region && healthData.region !== 'all' ? 'Region: ' + healthData.region : 'Region: All';
                         $('#coralHealthStatus').html(
                             '<div style="color: ' + statusColor + ';">' + healthData.status + '</div>' +
+                            '<div style="font-size: 0.9em; color: #fff; margin-top: 8px;">' + regionText + '</div>' +
                             '<div style="font-size: 0.9em; color: #fff; margin-top: 8px;">Damage: ' + healthData.damage_percent.toFixed(2) + '%</div>'
                         );
 
                         // Load visualization data
+                        var vizUrl = '/get-coral-visualization';
+                        if (region) {
+                            vizUrl += '?region=' + encodeURIComponent(region);
+                        }
+
                         $.ajax({
-                            url: '/get-coral-visualization',
+                            url: vizUrl,
                             type: 'GET',
                             dataType: 'json',
                             success: function(vizData) {
